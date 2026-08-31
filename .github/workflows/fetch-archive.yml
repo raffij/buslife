@@ -100,11 +100,15 @@ jobs:
         if: always()
         run: df -h /
 
+      # `if` rather than `[ -f ] && cat`: only one of these two files is ever
+      # written, so under `bash -e` the && form fails the step whenever the
+      # missing one comes last — which is every --check run, since it writes
+      # range-check.md and not range-summary.md.
       - name: Show the summary
         if: always()
         run: |
           for f in data/archive-cache/range-check.md data/archive-cache/range-summary.md; do
-            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
           done
 
       - name: Check whether anything actually changed

@@ -88,11 +88,14 @@ jobs:
       # Whichever this run produced — range-check.md for a dry run,
       # range-summary.md for a real one — show it on the run's own summary
       # page rather than only in the raw log.
+      # `if` rather than `[ -f ] && cat` — see the note in fetch-archive.yml:
+      # under `bash -e` the && form fails the step when the missing file comes
+      # last, which is every --check run.
       - name: Show the summary
         if: always()
         run: |
           for f in data/archive-cache/range-check.md data/archive-cache/range-summary.md; do
-            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+            if [ -f "$f" ]; then cat "$f" >> "$GITHUB_STEP_SUMMARY"; fi
           done
 
       - name: Check whether anything actually changed
