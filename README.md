@@ -5,6 +5,9 @@ Replay a day of real bus movements from [Bus Open Data Service](https://www.bus-
 fleet tally. The example route is **The Wave (line 99)**, Stagecoach South
 East's Eastbourne–Bexhill–Hastings coast service.
 
+Deployed to GitHub Pages: **<https://raffij.github.io/buslife/>** (the synthetic
+demo day, until a real one is compiled and pushed).
+
 Inspired by [Neil Garratt's replay](https://x.com/NeilGarratt) of the 433's
 meltdown in Croydon: BODS publishes where every bus in the country is *right
 now* and nothing about where it's been, so seeing a day play back means
