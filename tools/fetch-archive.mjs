@@ -29,7 +29,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, die } from './lib/args.mjs';
 import { parseSiriVm, vehicleKey } from './lib/siri.mjs';
-import { dayBundleUrl, nextDateStr, utcDaysForLocalDate, xmlDocumentsInZipFile } from './lib/archive.mjs';
+import { bundleCacheName, dayBundleUrl, nextDateStr, utcDaysForLocalDate, xmlDocumentsInZipFile } from './lib/archive.mjs';
 import { zonedMidnightUnix } from '../src/replay/time.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,7 +85,10 @@ let recordsSeen = 0;
 
 for (const utcDay of utcDays) {
   const label = `${utcDay.year}-${String(utcDay.month).padStart(2, '0')}-${String(utcDay.day).padStart(2, '0')}`;
-  const cachePath = join(cacheDir, `sirivm-${label}.zip`);
+  // Named by the shared helper, not by hand: fetch-archive-range.mjs's cache
+  // pruning has to recognise these files, and two independent format strings
+  // would drift without anything failing loudly.
+  const cachePath = join(cacheDir, bundleCacheName('sirivm', utcDay));
 
   let bundleAvailable;
   if (existsSync(cachePath)) {

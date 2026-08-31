@@ -47,6 +47,9 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
+    # One date across every route. Comfortably over the ~20 min a date takes
+    # (mostly download), while still failing the same day it's scheduled.
+    timeout-minutes: 120
     permissions:
       contents: write
       pull-requests: write
@@ -72,12 +75,22 @@ jobs:
           fi
           echo "date=$date" >> "$GITHUB_OUTPUT"
 
+      - name: Disk before
+        run: df -h /
+
+      # One local date still spans two ~4GB UTC bundles; --prune-cache drops
+      # the first as soon as it's been read, which is most of the footprint.
       - name: Backfill every route for this date
         run: >
           npm run fetch-archive-range -- --start "${{ steps.date.outputs.date }}" --end "${{ steps.date.outputs.date }}"
+          --prune-cache
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
           ${{ inputs.force == 'true' && '--force' || '' }}
           ${{ inputs.dry_run == 'true' && '--check' || '' }}
+
+      - name: Disk after
+        if: always()
+        run: df -h /
 
       - name: Show the summary
         if: always()

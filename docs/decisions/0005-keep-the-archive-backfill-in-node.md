@@ -109,6 +109,26 @@ it walks local file headers itself, so an archive built in a way `fflate`
 doesn't handle degrades to the slower path that has read these bundles
 before, rather than failing the run.
 
+### Disk, once time stopped being the limit
+
+Making the range affordable in time exposed the next runner limit: the shared
+cache in `data/archive-cache/` was never pruned. A bundle is ~4GB and N local
+dates span N+1 UTC days, so a week-long range wants ~32GB on a GitHub runner
+with ~14GB free — it would have run out of disk instead of out of time.
+
+`fetch-archive-range.mjs` now takes `--prune-cache`, which drops each bundle
+as soon as no remaining date in the run needs it, bounding disk to the two or
+three bundles actually in play while keeping the bandwidth saving that made
+the cache worth having (consecutive local dates share a bundle, and the shared
+one is explicitly kept). Both workflows pass it, and both now report `df -h /`
+either side of the backfill so "no space left on device" is legible rather
+than mysterious. It is opt-in because locally the opposite trade is usually
+right: re-downloading 4GB to fetch a second route for a date already done
+costs more than the disk does.
+
+Both workflows also gained an explicit `timeout-minutes`, so a job that is
+going to fail on a stalled transfer says so well before the 6-hour default.
+
 Still outstanding, and not addressed here: a BST local day pulls two bundles
 but needs only one hour from the first, and all 2880 of its documents are
 parsed to find it. Skipping entries by filename timestamp would cut most of

@@ -9,6 +9,8 @@ import {
   dayBundleUrl,
   nextDateStr,
   utcDaysForLocalDate,
+  bundleCacheName,
+  prunableBundles,
   xmlDocumentsInBundle,
   xmlDocumentsInZipFile,
   xmlDocumentsInZipFileViaUnzip,
@@ -102,6 +104,47 @@ test('a mix of flat XML and nested zips in one bundle are all reached', () => {
   });
   const xmls = [...xmlDocumentsInBundle(zip)].map((d) => d.xml).sort();
   assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
+});
+
+test('the bundle a later date still needs is never pruned', () => {
+  // Consecutive local dates overlap by exactly one UTC bundle in BST, so this
+  // is the case that matters: finishing 08-29 must not delete the 08-29
+  // bundle, because 08-30 needs it. Getting it wrong costs a silent ~4GB
+  // re-download rather than an error.
+  const cached = ['sirivm-2026-08-28.zip', 'sirivm-2026-08-29.zip'];
+  const prunable = prunableBundles(cached, ['2026-08-30', '2026-08-31'], LONDON);
+  assert.deepEqual(prunable, ['sirivm-2026-08-28.zip'], '08-29 is still needed by 08-30');
+});
+
+test('with no dates left, every cached bundle is prunable', () => {
+  const cached = ['sirivm-2026-08-28.zip', 'sirivm-2026-08-29.zip'];
+  assert.deepEqual(prunableBundles(cached, [], LONDON), cached);
+});
+
+test('pruning only ever touches bundles, not the run summaries beside them', () => {
+  // fetch-archive-range.mjs writes its summaries into the same directory.
+  const cached = [
+    'range-summary.md',
+    'range-summary.json',
+    'range-check.md',
+    'sirivm-2026-08-28.zip',
+    'notes.txt',
+  ];
+  assert.deepEqual(prunableBundles(cached, [], LONDON), ['sirivm-2026-08-28.zip']);
+});
+
+test('an interrupted download leaves a .part file that pruning can reclaim', () => {
+  // fetch-archive.mjs removes its own .part on failure, so one still here is
+  // dead weight even when the bundle it belongs to is still wanted.
+  const prunable = prunableBundles(['sirivm-2026-08-29.zip.part'], ['2026-08-30'], LONDON);
+  assert.deepEqual(prunable, ['sirivm-2026-08-29.zip.part']);
+});
+
+test('the cache name pruning looks for is the one the fetch actually writes', () => {
+  // These are computed in different files; if they drift, pruning silently
+  // stops finding anything and the disk fills again.
+  const [firstDay] = utcDaysForLocalDate('2026-08-30', LONDON);
+  assert.equal(bundleCacheName('sirivm', firstDay), 'sirivm-2026-08-29.zip');
 });
 
 /** Collect an async iterator of documents, the way the fetch loop consumes it. */

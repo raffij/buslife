@@ -78,6 +78,29 @@ export function utcDaysForLocalDate(dateStr, timeZone) {
   return days;
 }
 
+/** The filename fetch-archive.mjs caches one UTC day-bundle under. */
+export function bundleCacheName(format, { year, month, day }) {
+  return `${format}-${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}.zip`;
+}
+
+/**
+ * Which cached bundles can be deleted, given what's on disk and which local
+ * dates a run has still to process.
+ *
+ * Pure, and separate from the deleting, because the consequence of getting it
+ * wrong is invisible: drop a bundle a later date still needs and the run
+ * silently re-downloads 4GB, or — with a loose enough filename test — takes
+ * the summary files out with it. Both are much easier to pin here than in a
+ * workflow log.
+ */
+export function prunableBundles(cachedNames, remainingDates, timeZone, format = 'sirivm') {
+  const stillNeeded = new Set(
+    remainingDates.flatMap((d) => utcDaysForLocalDate(d, timeZone).map((day) => bundleCacheName(format, day))),
+  );
+  const isBundle = new RegExp(`^${format}-\\d{4}-\\d{2}-\\d{2}\\.zip(\\.part)?$`);
+  return cachedNames.filter((name) => isBundle.test(name) && !stillNeeded.has(name));
+}
+
 /**
  * The SIRI-VM XML documents inside one day-bundle zip.
  *

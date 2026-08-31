@@ -42,6 +42,10 @@ concurrency:
 jobs:
   backfill-range:
     runs-on: ubuntu-latest
+    # A wide range is long-running by nature, but the default is 6h and a job
+    # that is going to fail on disk or a stalled transfer should say so hours
+    # earlier than that.
+    timeout-minutes: 330
     permissions:
       contents: write
       pull-requests: write
@@ -57,13 +61,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # A day-bundle is ~4GB and N local dates span N+1 UTC days, so without
+      # --prune-cache a range exhausts the runner's disk within a few days'
+      # worth. Reported before and after because "no space left on device" is
+      # otherwise a mystery in the log.
+      - name: Disk before
+        run: df -h /
+
       - name: Backfill the range
         run: >
           npm run fetch-archive-range -- --start "${{ inputs.start_date }}" --end "${{ inputs.end_date }}"
+          --prune-cache
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
           ${{ inputs.operator && format('--operator {0}', inputs.operator) || '' }}
           ${{ inputs.force == 'true' && '--force' || '' }}
           ${{ inputs.dry_run == 'true' && '--check' || '' }}
+
+      - name: Disk after
+        if: always()
+        run: df -h /
 
       # Whichever this run produced — range-check.md for a dry run,
       # range-summary.md for a real one — show it on the run's own summary
