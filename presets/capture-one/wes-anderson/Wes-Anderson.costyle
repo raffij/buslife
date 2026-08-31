@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<things version="4">
+<E _t="RCPredefinedStyle" LocalizedName="Wes Anderson" Name="Wes Anderson" Category="User Styles" Vendor="user">
+  <E _t="RSXAdjustment" Tool="WhiteBalance">
+    <E _t="RSXValue" Key="TemperatureOffset" Value="300"/>
+    <E _t="RSXValue" Key="Tint" Value="4"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="Exposure">
+    <E _t="RSXValue" Key="Contrast" Value="-8"/>
+    <E _t="RSXValue" Key="Brightness" Value="5"/>
+    <E _t="RSXValue" Key="Saturation" Value="-12"/>
+    <E _t="RSXValue" Key="Black" Value="6"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="HighDynamicRange">
+    <E _t="RSXValue" Key="Highlight" Value="-15"/>
+    <E _t="RSXValue" Key="Shadow" Value="20"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="Curve" CurveType="RGB">
+    <E _t="RSXCurvePoint" X="0" Y="18"/>
+    <E _t="RSXCurvePoint" X="64" Y="70"/>
+    <E _t="RSXCurvePoint" X="128" Y="132"/>
+    <E _t="RSXCurvePoint" X="192" Y="198"/>
+    <E _t="RSXCurvePoint" X="255" Y="245"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="ColorBalance">
+    <E _t="RSXColorWheel" Range="Shadow" Hue="195" Amount="8"/>
+    <E _t="RSXColorWheel" Range="Midtone" Hue="50" Amount="5"/>
+    <E _t="RSXColorWheel" Range="Highlight" Hue="45" Amount="10"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="ColorEditor">
+    <E _t="RSXHSL" Channel="Yellow" Saturation="10" Luminance="5" Hue="0"/>
+    <E _t="RSXHSL" Channel="Orange" Saturation="5" Luminance="0" Hue="0"/>
+    <E _t="RSXHSL" Channel="Red" Saturation="-5" Luminance="0" Hue="10"/>
+    <E _t="RSXHSL" Channel="Green" Saturation="-20" Luminance="-5" Hue="-10"/>
+    <E _t="RSXHSL" Channel="Aqua" Saturation="8" Luminance="0" Hue="0"/>
+    <E _t="RSXHSL" Channel="Blue" Saturation="-15" Luminance="5" Hue="-10"/>
+    <E _t="RSXHSL" Channel="Magenta" Saturation="12" Luminance="8" Hue="0"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="ClarityStructure">
+    <E _t="RSXValue" Key="Structure" Value="-3"/>
+    <E _t="RSXValue" Key="Clarity" Value="0"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="FilmGrain">
+    <E _t="RSXValue" Key="Impact" Value="8"/>
+    <E _t="RSXValue" Key="Type" Value="Fine"/>
+    <E _t="RSXValue" Key="Granularity" Value="50"/>
+  </E>
+  <E _t="RSXAdjustment" Tool="Vignetting">
+    <E _t="RSXValue" Key="Amount" Value="-8"/>
+    <E _t="RSXValue" Key="Midpoint" Value="50"/>
+    <E _t="RSXValue" Key="Shape" Value="Round"/>
+  </E>
+</E>
+</things>
