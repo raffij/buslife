@@ -35,6 +35,10 @@ on:
         description: "Re-fetch even for a date already in public/replays/."
         type: boolean
         default: false
+      dry_run:
+        description: "Report what would be fetched without downloading or committing anything."
+        type: boolean
+        default: false
 
 concurrency:
   group: fetch-archive
@@ -73,6 +77,14 @@ jobs:
           npm run fetch-archive-range -- --start "${{ steps.date.outputs.date }}" --end "${{ steps.date.outputs.date }}"
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
           ${{ inputs.force == 'true' && '--force' || '' }}
+          ${{ inputs.dry_run == 'true' && '--check' || '' }}
+
+      - name: Show the summary
+        if: always()
+        run: |
+          for f in data/archive-cache/range-check.md data/archive-cache/range-summary.md; do
+            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Check whether anything actually changed
         id: diff

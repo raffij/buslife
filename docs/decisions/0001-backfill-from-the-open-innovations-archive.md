@@ -48,6 +48,17 @@ wouldn't have surfaced:
   streams each document out of the zip, parses it, keeps only the requested
   line, and discards the rest immediately rather than writing a day's
   national data to disk to filter it afterward.
+- **What "already have it" means.** Everything this decision touches
+  (`data/snapshots/`, `data/archive-cache/`) is deliberately gitignored,
+  ephemeral scratch space — empty again on the next fresh checkout, which is
+  most runs, since this mostly runs on GitHub Actions. The one thing that
+  *is* committed is the compiled output, `public/replays/<route.id>-<date>.json`
+  — so that file's existence, not anything in the scratch directories, is
+  what "do we need to fetch this again?" gets checked against everywhere
+  this question comes up (`fetch-archive-range.mjs`'s skip logic and its
+  `--check` dry-run mode alike). Checking against the scratch space instead
+  would silently give the wrong answer on the very first run on any new
+  machine — which, again, is most runs.
 
 **Alternatives considered:**
 

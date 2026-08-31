@@ -120,17 +120,31 @@ npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-07
 npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-07 --routes wave-99,another-route
 ```
 
-It skips any (date, route) pair already compiled, keeps going past an
-individual failure rather than aborting the whole range over one bad day, and
-prints a summary table at the end. **A day-bundle is the whole country's
-traffic** (easily a few hundred MB), so a wide range means a genuinely long,
-bandwidth-heavy run — start small to get a feel for the timing.
+It skips any (date, route) pair already compiled — checked against
+`public/replays/`, the one thing actually committed to the repo, not the
+gitignored scratch space (`data/snapshots/`, `data/archive-cache/`) fetching
+and compiling use along the way, which is empty again on every fresh
+checkout (see
+[decision 0001](docs/decisions/0001-backfill-from-the-open-innovations-archive.md)).
+It keeps going past an individual failure rather than aborting the whole
+range over one bad day, and prints a summary table at the end.
+
+**A day-bundle is the whole country's traffic** (easily a few hundred MB), so
+a wide range means a genuinely long, bandwidth-heavy run. Add `--check` (or
+`--dry-run`) to see what a range would do — which dates/routes are already
+covered and which would need fetching — without downloading or writing
+anything, so you know what you're about to commit to before you commit to it:
+
+```
+npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-31 --check
+```
 
 [`.github/workflows/fetch-archive-range.yml`](.github/workflows/fetch-archive-range.yml)
 runs the same thing from a `workflow_dispatch` trigger (`start_date`,
-`end_date`, optional `routes`/`operator`/`force`) from the
-[Actions tab](../../actions/workflows/fetch-archive-range.yml), and opens,
-validates, and merges its own PR the same way the daily job does — see
+`end_date`, optional `routes`/`operator`/`force`/`dry_run`) from the
+[Actions tab](../../actions/workflows/fetch-archive-range.yml) — `dry_run`
+prints its report to the run's own summary page — and opens, validates, and
+merges its own PR the same way the daily job does — see
 [decision 0002](docs/decisions/0002-automate-the-daily-backfill.md) for why
 that can't just lean on `ci.yml`'s existing checks, and
 [decision 0003](docs/decisions/0003-generalise-the-backfill-to-a-range-and-multiple-routes.md)

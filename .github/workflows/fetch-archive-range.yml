@@ -30,6 +30,10 @@ on:
         description: "Re-fetch/recompile dates that already have a compiled replay."
         type: boolean
         default: false
+      dry_run:
+        description: "Report what would be fetched without downloading or committing anything. Worth running first for a wide range, given the size of what a real run downloads (see below)."
+        type: boolean
+        default: false
 
 concurrency:
   group: fetch-archive-range
@@ -59,6 +63,17 @@ jobs:
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
           ${{ inputs.operator && format('--operator {0}', inputs.operator) || '' }}
           ${{ inputs.force == 'true' && '--force' || '' }}
+          ${{ inputs.dry_run == 'true' && '--check' || '' }}
+
+      # Whichever this run produced — range-check.md for a dry run,
+      # range-summary.md for a real one — show it on the run's own summary
+      # page rather than only in the raw log.
+      - name: Show the summary
+        if: always()
+        run: |
+          for f in data/archive-cache/range-check.md data/archive-cache/range-summary.md; do
+            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Check whether anything actually changed
         id: diff

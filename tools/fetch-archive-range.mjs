@@ -17,6 +17,19 @@
  * for it shares that one cache, so a UTC day-bundle spanning two local dates
  * — or needed by two different routes on the same date — is only ever
  * downloaded once per run.
+ *
+ * The check this all rests on — "do we already have this?" — is answered
+ * from public/replays/<route.id>-<date>.json's mere existence: that's the
+ * one thing that's actually committed to the repo (data/snapshots/ and
+ * data/archive-cache/ are both gitignored, ephemeral scratch space, empty
+ * again on the next fresh checkout), so it's the only check that's still
+ * correct after this exact process has never run on this machine before —
+ * a GitHub Actions runner, most of the time. --check runs that same check
+ * for a range without fetching anything, for when the range is wide enough
+ * that knowing what it would even do is worth doing before spending the
+ * bandwidth: `--check` alone, or --dry-run.
+ *
+ *   npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-31 --check
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -48,6 +61,8 @@ if (!routeIds.length) die(`no routes found in ${routesDir}, and none given via -
 // operators.
 const operator = args.operator ? String(args.operator) : null;
 const force = args.force === true || args.force === 'true';
+const check = args.check === true || args.check === 'true' || args['dry-run'] === true || args['dry-run'] === 'true';
+if (check && force) die("--check and --force don't make sense together — --force means refetch even what we have; --check never fetches anything");
 
 let dates;
 try {
@@ -56,7 +71,8 @@ try {
   die(err.message);
 }
 
-console.log(`backfilling ${dates.length} date(s) x ${routeIds.length} route(s) = ${dates.length * routeIds.length} combination(s)`);
+if (check) console.log('--check: reporting only — nothing will be downloaded or written to public/replays/\n');
+console.log(`${check ? 'checking' : 'backfilling'} ${dates.length} date(s) x ${routeIds.length} route(s) = ${dates.length * routeIds.length} combination(s)`);
 console.log(`dates: ${start} .. ${end}`);
 console.log(`routes: ${routeIds.join(', ')}`);
 
@@ -73,12 +89,24 @@ for (const date of dates) {
     }
 
     const outPath = join(ROOT, 'public/replays', `${loaded.route.id}-${date}.json`);
-    if (existsSync(outPath) && !force) {
+    const haveIt = existsSync(outPath);
+    if (haveIt && !force) {
       results.push({ date, routeId, status: 'skipped', detail: 'already compiled' });
       continue;
     }
 
     const line = String(loaded.route.line);
+
+    if (check) {
+      results.push({
+        date,
+        routeId,
+        status: 'would-fetch',
+        detail: haveIt ? 'would re-fetch (already have it, but --force)' : 'not yet compiled',
+      });
+      continue;
+    }
+
     console.log(`\n--- ${date} / ${routeId} (line ${line}) ---`);
 
     try {
@@ -102,7 +130,7 @@ for (const date of dates) {
   }
 }
 
-const icon = { ok: '✅', skipped: '⏭️', error: '❌' };
+const icon = { ok: '✅', skipped: '⏭️', error: '❌', 'would-fetch': '⬇️' };
 const width = Math.max(...results.map((r) => `${r.date} / ${r.routeId}`.length));
 
 console.log('\n=== summary ===');
@@ -113,17 +141,31 @@ for (const r of results) {
 const ok = results.filter((r) => r.status === 'ok').length;
 const skipped = results.filter((r) => r.status === 'skipped').length;
 const failed = results.filter((r) => r.status === 'error').length;
-console.log(`\n${ok} fetched, ${skipped} skipped, ${failed} failed, ${results.length} total`);
+const wouldFetch = results.filter((r) => r.status === 'would-fetch').length;
+
+const headline = check
+  ? `${start}..${end} for ${routeIds.join(', ')}: **${skipped}** already have it, **${wouldFetch}** would need fetching.`
+  : `Backfilled \`${start}\`..\`${end}\` for ${routeIds.join(', ')}: **${ok}** fetched, **${skipped}** already had it, **${failed}** failed.`;
+
+console.log(
+  `\n${check ? `${skipped} already have it, ${wouldFetch} would need fetching` : `${ok} fetched, ${skipped} skipped, ${failed} failed`}, ${results.length} total`,
+);
 
 const cacheDir = join(ROOT, 'data/archive-cache');
 // May not exist yet: every combination could have been skipped or failed
 // before fetch-archive.mjs (which is what normally creates it) ever ran.
 mkdirSync(cacheDir, { recursive: true });
-writeFileSync(join(cacheDir, 'range-summary.json'), JSON.stringify({ start, end, routeIds, results, ok, skipped, failed }, null, 2));
+// A --check run writes to its own filenames — separate from a real run's
+// range-summary.*, which a PR body may still need to read after this.
+const summaryBase = check ? 'range-check' : 'range-summary';
 writeFileSync(
-  join(cacheDir, 'range-summary.md'),
+  join(cacheDir, `${summaryBase}.json`),
+  JSON.stringify({ start, end, routeIds, check, results, ok, skipped, failed, wouldFetch }, null, 2),
+);
+writeFileSync(
+  join(cacheDir, `${summaryBase}.md`),
   [
-    `Backfilled \`${start}\`..\`${end}\` for ${routeIds.join(', ')}: **${ok}** fetched, **${skipped}** already had it, **${failed}** failed.`,
+    headline,
     '',
     '| Date | Route | Result |',
     '| --- | --- | --- |',
@@ -131,6 +173,8 @@ writeFileSync(
   ].join('\n') + '\n',
 );
 
-if (ok === 0 && failed > 0) {
+// A --check run reporting "nothing to fetch" is success, not failure — it's
+// the same thing an already-fully-backfilled real run reports.
+if (!check && ok === 0 && failed > 0) {
   die(`nothing succeeded — ${failed} failure(s), see above`);
 }
