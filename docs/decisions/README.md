@@ -12,3 +12,4 @@ Numbered sequentially, oldest first. Use `TEMPLATE.md` to start a new one.
 | [0002](0002-automate-the-daily-backfill.md) | Automate the daily backfill with a self-merging GitHub Action | Accepted |
 | [0003](0003-generalise-the-backfill-to-a-range-and-multiple-routes.md) | Generalise the backfill to a date range and multiple routes | Accepted |
 | [0004](0004-stream-large-archive-bundles-from-disk.md) | Stream large archive bundles from disk | Accepted |
+| [0005](0005-keep-the-archive-backfill-in-node.md) | Keep the archive backfill in Node, and fix the algorithm instead | Accepted |
