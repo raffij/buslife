@@ -14,9 +14,9 @@
  * downloading.
  */
 
-import { unzipSync } from 'fflate';
+import { Unzip, UnzipInflate, unzipSync } from 'fflate';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { zonedMidnightUnix } from '../../src/replay/time.mjs';
 
 export const ARCHIVE_BASE_URL = 'https://data.datalibrary.uk/transport/BODS-ARCHIVE';
@@ -104,27 +104,126 @@ export function* xmlDocumentsInBundle(zipBytes) {
   }
 }
 
+/** One ZIP entry's bytes, turned into the document(s) it holds. */
+function* documentsFromEntry(name, bytes) {
+  if (name.toLowerCase().endsWith('.zip')) {
+    yield* xmlDocumentsInBundle(bytes);
+  } else {
+    yield { name, xml: new TextDecoder().decode(bytes) };
+  }
+}
+
 /**
  * Read XML entries from a ZIP file without loading the archive into Node's
- * heap. The runner has the portable `unzip` utility installed, and it can
- * seek to each entry in a multi-GB archive while this process only holds one
- * XML document (or nested per-poll ZIP) at a time.
+ * heap, by inflating it in one sequential pass.
+ *
+ * A day-bundle holds ~2880 entries (one per ~30s poll). The obvious approach —
+ * ask `unzip` for each entry in turn — costs a subprocess per entry, and each
+ * one re-opens the archive and re-reads its central directory; measured
+ * against a real bundle that was ~290ms of pure overhead per document plus
+ * ~5.5 minutes for the initial listing, which on 2880 entries is most of an
+ * hour spent on process startup rather than on data. Streaming reads local
+ * file headers in order instead, so the whole bundle is traversed once and no
+ * subprocess is spawned at all.
+ *
+ * Memory stays bounded because entries are handed over as they complete and
+ * the source is pulled one chunk at a time — `for await` only asks for the
+ * next chunk once the consumer has finished with the last document, so a
+ * slow parse throttles the read rather than queueing the archive up in heap.
  *
  * This is deliberately separate from xmlDocumentsInBundle(): the byte-based
  * helper is useful for small unit-test fixtures and callers that already have
  * bytes, while the archive fetch path must remain safe for 6GB bundles.
  */
-export function* xmlDocumentsInZipFile(zipPath) {
+export async function* xmlDocumentsInZipFile(zipPath) {
   if (!existsSync(zipPath)) throw new Error(`no ZIP file at ${zipPath}`);
 
-  const listing = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' });
+  let yielded = 0;
+  try {
+    for await (const doc of streamZipFile(zipPath)) {
+      yielded++;
+      yield doc;
+    }
+  } catch (err) {
+    // The streaming reader walks local file headers itself, so an archive
+    // built in a way it doesn't handle fails here rather than degrading. As
+    // long as it failed before handing anything over we can still fall back
+    // to the `unzip` binary, which is slow but has read these bundles
+    // before; once documents are out, retrying would double-count them.
+    if (yielded > 0) throw err;
+    console.warn(`  streaming read failed (${err.message}) — falling back to the unzip binary, which is slower`);
+    yield* xmlDocumentsInZipFileViaUnzip(zipPath);
+  }
+}
+
+/** The one sequential inflate pass behind xmlDocumentsInZipFile(). */
+async function* streamZipFile(zipPath) {
+  const unzipper = new Unzip();
+  unzipper.register(UnzipInflate);
+
+  /** Entries that finished inflating during the most recent push. */
+  let ready = [];
+  let failure = null;
+
+  unzipper.onfile = (file) => {
+    if (file.name.endsWith('/')) return; // a directory entry
+    const chunks = [];
+    let size = 0;
+    file.ondata = (err, chunk, final) => {
+      if (err) {
+        failure ??= err;
+        return;
+      }
+      if (chunk?.length) {
+        chunks.push(chunk);
+        size += chunk.length;
+      }
+      if (final) ready.push({ name: file.name, bytes: joinChunks(chunks, size) });
+    };
+    file.start();
+  };
+
+  const source = createReadStream(zipPath, { highWaterMark: 1 << 20 });
+  try {
+    for await (const chunk of source) {
+      unzipper.push(chunk, false);
+      if (failure) throw failure;
+      if (ready.length) {
+        const batch = ready;
+        ready = [];
+        for (const { name, bytes } of batch) yield* documentsFromEntry(name, bytes);
+      }
+    }
+    unzipper.push(new Uint8Array(0), true);
+    if (failure) throw failure;
+    for (const { name, bytes } of ready) yield* documentsFromEntry(name, bytes);
+  } finally {
+    source.destroy();
+  }
+}
+
+function joinChunks(chunks, size) {
+  if (chunks.length === 1) return chunks[0];
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}
+
+/**
+ * The previous reader: one `unzip` subprocess per entry. Kept as the fallback
+ * for an archive the streaming reader can't walk — see xmlDocumentsInZipFile.
+ */
+export function* xmlDocumentsInZipFileViaUnzip(zipPath) {
+  if (!existsSync(zipPath)) throw new Error(`no ZIP file at ${zipPath}`);
+
+  const listing = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
   for (const name of listing.split('\n')) {
     if (!name || name.endsWith('/')) continue;
     const bytes = execFileSync('unzip', ['-p', zipPath, name], { maxBuffer: 128 * 1024 * 1024 });
-    if (name.toLowerCase().endsWith('.zip')) {
-      yield* xmlDocumentsInBundle(bytes);
-    } else {
-      yield { name, xml: new TextDecoder().decode(bytes) };
-    }
+    yield* documentsFromEntry(name, bytes);
   }
 }

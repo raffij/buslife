@@ -14,10 +14,12 @@
  *   npm run compile -- --date 2026-08-30
  *
  * A day-bundle is the whole country's SIRI-VM traffic and can run into the
- * multiple GB, so this streams the download to disk, then reads each ZIP
- * entry individually, filters it to the requested line, and discards it —
- * nothing about the other ~99% of the country's buses is held in memory at
- * once.
+ * multiple GB, so this streams the download to disk, then inflates the
+ * archive in one sequential pass, filtering each document to the requested
+ * line as it goes — nothing about the other ~99% of the country's buses is
+ * held in memory at once, and the filter runs inside the parse rather than
+ * after it, which is what makes a bundle affordable at all (see
+ * docs/decisions/0005 for the measurements).
  */
 
 import { appendFileSync, existsSync, mkdirSync, createWriteStream, renameSync, unlinkSync } from 'node:fs';
@@ -100,20 +102,23 @@ for (const utcDay of utcDays) {
     console.log(`${label}: downloaded to ${cachePath}`);
   }
 
-  for (const { xml } of xmlDocumentsInZipFile(cachePath)) {
+  for await (const { xml } of xmlDocumentsInZipFile(cachePath)) {
     docsRead++;
     if (docsRead % 500 === 0) process.stdout.write(`\r${label}: parsed ${docsRead} documents, ${matched.length} matches so far  `);
 
-    let records;
+    let records, scanned;
     try {
-      ({ records } = parseSiriVm(xml));
+      // The line filter goes *into* the parser rather than being applied to
+      // its result: a national document is ~20k vehicles and we want the ~10
+      // on this line, so building the other 20k as objects first is the bulk
+      // of the work this tool ever does. See parseSiriVm's note.
+      ({ records, scanned } = parseSiriVm(xml, { line }));
     } catch {
       continue; // one malformed document in a day's worth is not worth aborting for
     }
+    recordsSeen += scanned;
 
     for (const r of records) {
-      recordsSeen++;
-      if (String(r.line) !== line) continue;
       if (operator && r.operatorRef !== operator) continue;
       if (r.t < start || r.t >= end) continue; // outside the requested local day
       const id = `${vehicleKey(r)}@${r.t}`;

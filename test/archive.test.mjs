@@ -11,6 +11,7 @@ import {
   utcDaysForLocalDate,
   xmlDocumentsInBundle,
   xmlDocumentsInZipFile,
+  xmlDocumentsInZipFileViaUnzip,
 } from '../tools/lib/archive.mjs';
 
 const LONDON = 'Europe/London';
@@ -103,7 +104,14 @@ test('a mix of flat XML and nested zips in one bundle are all reached', () => {
   assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
 });
 
-test('a ZIP file is read entry-by-entry without loading the archive into Node', () => {
+/** Collect an async iterator of documents, the way the fetch loop consumes it. */
+async function collect(iterable) {
+  const out = [];
+  for await (const doc of iterable) out.push(doc);
+  return out;
+}
+
+test('a ZIP file is read entry-by-entry without loading the archive into Node', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
   const path = join(directory, 'bundle.zip');
   try {
@@ -111,8 +119,58 @@ test('a ZIP file is read entry-by-entry without loading the archive into Node', 
       'flat.xml': strToU8('<Siri>flat</Siri>'),
       'wrapped.zip': zipSync({ 'siri.xml': strToU8('<Siri>nested</Siri>') }),
     }));
-    const xmls = [...xmlDocumentsInZipFile(path)].map((d) => d.xml).sort();
+    const xmls = (await collect(xmlDocumentsInZipFile(path))).map((d) => d.xml).sort();
     assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('every entry of a many-entry bundle is reached, in one streaming pass', async () => {
+  // A day-bundle holds ~2880 entries and the streaming reader hands them over
+  // in batches as each read chunk completes them — so "did we drop one at a
+  // batch boundary?" is the question worth asking of more than two entries.
+  const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
+  const path = join(directory, 'many.zip');
+  try {
+    const entries = {};
+    for (let i = 0; i < 250; i++) {
+      // Padded so entries span read chunks rather than all landing in one.
+      entries[`sirivm-${String(i).padStart(4, '0')}.xml`] = strToU8(`<Siri>${i}${'.'.repeat(5000)}</Siri>`);
+    }
+    writeFileSync(path, zipSync(entries));
+    const docs = await collect(xmlDocumentsInZipFile(path));
+    assert.equal(docs.length, 250);
+    assert.equal(new Set(docs.map((d) => d.name)).size, 250, 'no entry yielded twice');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('directory entries are skipped by the streaming file reader too', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
+  const path = join(directory, 'dirs.zip');
+  try {
+    writeFileSync(path, zipSync({ 'sirivm/': new Uint8Array(0), 'sirivm/a.xml': strToU8('<Siri>a</Siri>') }));
+    const docs = await collect(xmlDocumentsInZipFile(path));
+    assert.equal(docs.length, 1);
+    assert.equal(docs[0].name, 'sirivm/a.xml');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the unzip-binary fallback reads the same documents as the streaming reader', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
+  const path = join(directory, 'bundle.zip');
+  try {
+    writeFileSync(path, zipSync({
+      'flat.xml': strToU8('<Siri>flat</Siri>'),
+      'wrapped.zip': zipSync({ 'siri.xml': strToU8('<Siri>nested</Siri>') }),
+    }));
+    const streamed = (await collect(xmlDocumentsInZipFile(path))).map((d) => d.xml).sort();
+    const viaUnzip = [...xmlDocumentsInZipFileViaUnzip(path)].map((d) => d.xml).sort();
+    assert.deepEqual(viaUnzip, streamed);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

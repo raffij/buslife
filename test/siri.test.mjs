@@ -76,6 +76,53 @@ test('an empty delivery is not an error', () => {
   assert.deepEqual(records, []);
 });
 
+test('filtering by line in the parse yields exactly what filtering after it would', () => {
+  // The backfill can't afford to build the whole country and then discard it,
+  // so the line filter moved inside parseSiriVm. That's only safe if it's a
+  // pure optimisation — same records, fewer built — which is what this pins.
+  const all = parseSiriVm(FIXTURE).records.filter((r) => r.line === '99');
+  const filtered = parseSiriVm(FIXTURE, { line: '99' }).records;
+  assert.deepEqual(filtered, all);
+  assert.equal(filtered.length, 1);
+});
+
+test('a line filter that matches nothing yields nothing', () => {
+  assert.deepEqual(parseSiriVm(FIXTURE, { line: '77' }).records, []);
+});
+
+test('a line is not matched on a substring of some other field', () => {
+  // The fast path rejects a block that doesn't contain the line anywhere, so
+  // a block kept only because "78" appears in its Bearing must still be
+  // dropped once its actual line is read.
+  const { records } = parseSiriVm(FIXTURE, { line: '78' });
+  assert.deepEqual(records, [], 'Bearing 78.0 is not line 78');
+});
+
+test('a line number that is a prefix of another line is not confused with it', () => {
+  const twoLines = FIXTURE.replace('<PublishedLineName>99</PublishedLineName>', '<PublishedLineName>993</PublishedLineName>');
+  assert.deepEqual(parseSiriVm(twoLines, { line: '99' }).records, [], '993 is not 99');
+  assert.equal(parseSiriVm(twoLines, { line: '993' }).records.length, 1);
+});
+
+test('PublishedLineName wins over LineRef when the two disagree', () => {
+  const split = FIXTURE.replace('<LineRef>99</LineRef>', '<LineRef>X99</LineRef>');
+  assert.equal(parseSiriVm(split, { line: '99' }).records.length, 1, 'matched on PublishedLineName');
+  assert.deepEqual(parseSiriVm(split, { line: 'X99' }).records, [], 'LineRef is not consulted when PublishedLineName exists');
+});
+
+test('LineRef is the fallback when there is no PublishedLineName', () => {
+  const noPublished = FIXTURE.replace(/<PublishedLineName>99<\/PublishedLineName>/g, '');
+  assert.equal(parseSiriVm(noPublished, { line: '99' }).records.length, 1);
+});
+
+test('scanned counts every vehicle the document held, filtered or not', () => {
+  // This is what tells "the archive has no data for this day" apart from
+  // "your --line is wrong" once filtering happens inside the parse.
+  assert.equal(parseSiriVm(FIXTURE).scanned, 2);
+  assert.equal(parseSiriVm(FIXTURE, { line: '99' }).scanned, 2);
+  assert.equal(parseSiriVm(FIXTURE, { line: 'nothing' }).scanned, 2);
+});
+
 test('vehicle identity carries the operator, since fleet numbers repeat', () => {
   assert.equal(vehicleKey({ operatorRef: 'SCCO', vehicleRef: '1' }), 'SCCO:1');
   assert.notEqual(
