@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { zipSync, strToU8 } from 'fflate';
 import {
+  dateRange,
   dayBundleUrl,
   nextDateStr,
   utcDaysForLocalDate,
@@ -96,4 +97,30 @@ test('a mix of flat XML and nested zips in one bundle are all reached', () => {
   });
   const xmls = [...xmlDocumentsInBundle(zip)].map((d) => d.xml).sort();
   assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
+});
+
+test('a date range includes both endpoints', () => {
+  assert.deepEqual(dateRange('2026-08-01', '2026-08-01'), ['2026-08-01']);
+  assert.deepEqual(dateRange('2026-08-30', '2026-09-02'), [
+    '2026-08-30',
+    '2026-08-31',
+    '2026-09-01',
+    '2026-09-02',
+  ]);
+});
+
+test('a date range crossing a year boundary is walked correctly', () => {
+  assert.deepEqual(dateRange('2026-12-30', '2027-01-01'), [
+    '2026-12-30',
+    '2026-12-31',
+    '2027-01-01',
+  ]);
+});
+
+test('a range with start after end is rejected rather than looping forever', () => {
+  assert.throws(() => dateRange('2026-08-05', '2026-08-01'), /after/);
+});
+
+test('an implausibly long range is rejected as a likely mistake', () => {
+  assert.throws(() => dateRange('2020-01-01', '2026-01-01'), /exceeds/);
 });

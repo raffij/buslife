@@ -12,7 +12,8 @@
     "record": "node tools/record.mjs",
     "compile": "node tools/compile.mjs",
     "demo": "node tools/make-demo.mjs",
-    "fetch-archive": "node tools/fetch-archive.mjs"
+    "fetch-archive": "node tools/fetch-archive.mjs",
+    "fetch-archive-range": "node tools/fetch-archive-range.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",

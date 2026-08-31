@@ -1,0 +1,62 @@
+name: Merge a replay-data PR
+description: >
+  Commits everything currently under public/replays/, opens a PR for it, and
+  merges it immediately. Self-contained because a PR opened with the default
+  GITHUB_TOKEN doesn't fire other workflows' pull_request triggers, so
+  ci.yml's checks job can never gate it — the calling workflow must already
+  have validated the change (npm test / npm run build) before using this.
+
+inputs:
+  branch:
+    description: Branch to push and open the PR from.
+    required: true
+  title:
+    description: PR title (and the commit message).
+    required: true
+  body-file:
+    description: Path to a Markdown file to use as the PR body.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BRANCH: ${{ inputs.branch }}
+        TITLE: ${{ inputs.title }}
+        BODY_FILE: ${{ inputs.body-file }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+        git checkout -b "$BRANCH"
+        git add public/replays/
+        git commit -m "$TITLE"
+        # --force: this branch is rebuilt from main every run, so a leftover
+        # from a previous failed attempt (pushed, but the PR step never
+        # completed) must not block a retry.
+        git push --force -u origin "$BRANCH"
+
+        # Idempotent: a previous attempt may have opened this PR and then
+        # failed before merging, in which case creating it again would just
+        # error that it already exists.
+        existing_pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
+        if [ -n "$existing_pr" ]; then
+          echo "Reusing existing PR #$existing_pr for $BRANCH"
+          pr="$existing_pr"
+        else
+          pr="$(gh pr create --title "$TITLE" --body-file "$BODY_FILE" --base main --head "$BRANCH" | grep -oE '[0-9]+$')"
+        fi
+
+        gh pr merge --squash --delete-branch "$pr"
+
+    # A GITHUB_TOKEN-authored merge push doesn't trigger other workflows'
+    # `push` triggers on its own (the same recursion guard as above) —
+    # dispatch explicitly, same as ci.yml's own automerge job already does.
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh workflow run ci.yml --ref main --repo "${{ github.repository }}"
+        gh workflow run deploy-pages.yml --ref main --repo "${{ github.repository }}"
