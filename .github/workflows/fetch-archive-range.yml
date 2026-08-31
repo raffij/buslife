@@ -1,0 +1,84 @@
+name: Bulk backfill a date range from the BODS archive
+
+# Manually-triggered: backfill an arbitrary range of past days, for one or
+# more routes, in a single run — see
+# docs/decisions/0003-generalise-the-backfill-to-a-range-and-multiple-routes.md.
+# fetch-archive.yml (the daily job) is a one-day call into the same
+# tools/fetch-archive-range.mjs this uses.
+#
+# A day-bundle is the WHOLE COUNTRY's SIRI-VM traffic (easily a few hundred
+# MB) — a wide range means a lot of downloading and a long-running job, not
+# just a lot of output. Start with a short range to get a feel for the
+# timing before requesting a large one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First local date to backfill (YYYY-MM-DD, inclusive)."
+        required: true
+      end_date:
+        description: "Last local date to backfill (YYYY-MM-DD, inclusive)."
+        required: true
+      routes:
+        description: "Comma-separated route ids (data/routes/<id>.route.json). Leave empty for every route in the repo."
+        required: false
+      operator:
+        description: "Optional SIRI-VM OperatorRef (a NOC code, e.g. SCCO — not the display name) to disambiguate an ambiguous line number. Applied to every route in this run."
+        required: false
+      force:
+        description: "Re-fetch/recompile dates that already have a compiled replay."
+        type: boolean
+        default: false
+
+concurrency:
+  group: fetch-archive-range
+  cancel-in-progress: false
+
+jobs:
+  backfill-range:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Backfill the range
+        run: >
+          npm run fetch-archive-range -- --start "${{ inputs.start_date }}" --end "${{ inputs.end_date }}"
+          ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
+          ${{ inputs.operator && format('--operator {0}', inputs.operator) || '' }}
+          ${{ inputs.force == 'true' && '--force' || '' }}
+
+      - name: Check whether anything actually changed
+        id: diff
+        run: |
+          if git diff --quiet -- public/replays/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate before pushing anything
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          npm test
+          npm run build
+
+      - name: Open and merge the PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: ./.github/actions/merge-replay-pr
+        with:
+          branch: bot/backfill-${{ inputs.start_date }}-to-${{ inputs.end_date }}
+          title: "Backfill ${{ inputs.start_date }}..${{ inputs.end_date }} from the BODS archive"
+          body-file: data/archive-cache/range-summary.md

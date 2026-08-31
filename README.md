@@ -16,10 +16,11 @@ recording it yourself first.
 ## How it works
 
 ```
-tools/record.mjs         poll the live BODS feed every 30s, append to data/snapshots/
-tools/fetch-archive.mjs  backfill a past day from a third-party archive instead
-tools/compile.mjs        map-match a day's sightings onto the route, write public/replays/
-src/                     the web player (React + deck.gl + MapLibre)
+tools/record.mjs               poll the live BODS feed every 30s, append to data/snapshots/
+tools/fetch-archive.mjs        backfill one past day from a third-party archive instead
+tools/fetch-archive-range.mjs  the above, for a date range × one or more routes
+tools/compile.mjs              map-match a day's sightings onto the route, write public/replays/
+src/                           the web player (React + deck.gl + MapLibre)
 ```
 
 Raw GPS pings are noisy — metres of jitter, the odd dropped fix, buses
@@ -103,12 +104,37 @@ separate pipeline.
 ### This runs automatically every day
 
 [`.github/workflows/fetch-archive.yml`](.github/workflows/fetch-archive.yml)
-does the above for "yesterday" on a schedule, needing no API key (the archive
-is public), and opens, validates, and merges its own PR — see
-[decision 0002](docs/decisions/0002-automate-the-daily-backfill.md) for why
-it can't just lean on `ci.yml`'s existing checks for that. Trigger it by hand
-(a specific date, or `force` to re-fetch one already backfilled) from the
+does the above for "yesterday", for every route in `data/routes/`, on a
+schedule — needing no API key (the archive is public) — and opens, validates,
+and merges its own PR. Trigger it by hand (a specific date, a subset of
+routes, or `force` to re-fetch one already backfilled) from the
 [Actions tab](../../actions/workflows/fetch-archive.yml).
+
+### Backfilling a whole range at once
+
+For more than one day — filling in history from before this repo existed, or
+after adding a new route — run the same tool directly over a range:
+
+```
+npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-07
+npm run fetch-archive-range -- --start 2026-08-01 --end 2026-08-07 --routes wave-99,another-route
+```
+
+It skips any (date, route) pair already compiled, keeps going past an
+individual failure rather than aborting the whole range over one bad day, and
+prints a summary table at the end. **A day-bundle is the whole country's
+traffic** (easily a few hundred MB), so a wide range means a genuinely long,
+bandwidth-heavy run — start small to get a feel for the timing.
+
+[`.github/workflows/fetch-archive-range.yml`](.github/workflows/fetch-archive-range.yml)
+runs the same thing from a `workflow_dispatch` trigger (`start_date`,
+`end_date`, optional `routes`/`operator`/`force`) from the
+[Actions tab](../../actions/workflows/fetch-archive-range.yml), and opens,
+validates, and merges its own PR the same way the daily job does — see
+[decision 0002](docs/decisions/0002-automate-the-daily-backfill.md) for why
+that can't just lean on `ci.yml`'s existing checks, and
+[decision 0003](docs/decisions/0003-generalise-the-backfill-to-a-range-and-multiple-routes.md)
+for the range/multi-route generalisation itself.
 
 ## Using a different route
 
@@ -126,7 +152,7 @@ hundred metres, flagged as such in the app). To follow a different line:
 ## Development
 
 ```
-npm test      # geometry, map-matcher, SIRI-VM parser, replay clock, archive — 49 tests
+npm test      # geometry, map-matcher, SIRI-VM parser, replay clock, archive, routes — 58 tests
 npm run build # static build, output in dist/
 ```
 

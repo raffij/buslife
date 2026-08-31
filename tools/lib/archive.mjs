@@ -36,6 +36,25 @@ export function nextDateStr(dateStr) {
 }
 
 /**
+ * Every calendar date from `startStr` to `endStr` inclusive (both YYYY-MM-DD).
+ * `YYYY-MM-DD` sorts the same lexicographically as chronologically, so a
+ * plain string comparison is enough to validate the range and to know when
+ * to stop — no Date arithmetic needed beyond `nextDateStr`.
+ */
+export function dateRange(startStr, endStr) {
+  if (startStr > endStr) throw new Error(`start date ${startStr} is after end date ${endStr}`);
+  const MAX_DAYS = 400; // a range this long is almost certainly a typo'd year, not intent
+  const out = [];
+  let cursor = startStr;
+  while (cursor <= endStr) {
+    out.push(cursor);
+    if (out.length > MAX_DAYS) throw new Error(`range exceeds ${MAX_DAYS} days (${startStr}..${endStr}) — check --start/--end`);
+    cursor = nextDateStr(cursor);
+  }
+  return out;
+}
+
+/**
  * Which UTC calendar day(s) a local calendar day's bundle(s) must be pulled
  * from. The archive is organised by UTC day, but a local day is not one — in
  * British Summer Time, Europe/London midnight-to-midnight is 23:00 UTC to
