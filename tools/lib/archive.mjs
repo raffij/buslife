@@ -11,10 +11,12 @@
  * This module holds the parts of talking to that archive that don't need a
  * network — which day-bundle(s) a local calendar day needs, and how to pull
  * SIRI-VM XML back out of one. `fetch-archive.mjs` does the actual
- * downloading and is the thin, untested part.
+ * downloading.
  */
 
 import { unzipSync } from 'fflate';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { zonedMidnightUnix } from '../../src/replay/time.mjs';
 
 export const ARCHIVE_BASE_URL = 'https://data.datalibrary.uk/transport/BODS-ARCHIVE';
@@ -99,5 +101,30 @@ export function* xmlDocumentsInBundle(zipBytes) {
       continue;
     }
     yield { name, xml: decoder.decode(bytes) };
+  }
+}
+
+/**
+ * Read XML entries from a ZIP file without loading the archive into Node's
+ * heap. The runner has the portable `unzip` utility installed, and it can
+ * seek to each entry in a multi-GB archive while this process only holds one
+ * XML document (or nested per-poll ZIP) at a time.
+ *
+ * This is deliberately separate from xmlDocumentsInBundle(): the byte-based
+ * helper is useful for small unit-test fixtures and callers that already have
+ * bytes, while the archive fetch path must remain safe for 6GB bundles.
+ */
+export function* xmlDocumentsInZipFile(zipPath) {
+  if (!existsSync(zipPath)) throw new Error(`no ZIP file at ${zipPath}`);
+
+  const listing = execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' });
+  for (const name of listing.split('\n')) {
+    if (!name || name.endsWith('/')) continue;
+    const bytes = execFileSync('unzip', ['-p', zipPath, name], { maxBuffer: 128 * 1024 * 1024 });
+    if (name.toLowerCase().endsWith('.zip')) {
+      yield* xmlDocumentsInBundle(bytes);
+    } else {
+      yield { name, xml: new TextDecoder().decode(bytes) };
+    }
   }
 }

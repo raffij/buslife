@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
 import {
   dateRange,
@@ -7,6 +10,7 @@ import {
   nextDateStr,
   utcDaysForLocalDate,
   xmlDocumentsInBundle,
+  xmlDocumentsInZipFile,
 } from '../tools/lib/archive.mjs';
 
 const LONDON = 'Europe/London';
@@ -97,6 +101,21 @@ test('a mix of flat XML and nested zips in one bundle are all reached', () => {
   });
   const xmls = [...xmlDocumentsInBundle(zip)].map((d) => d.xml).sort();
   assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
+});
+
+test('a ZIP file is read entry-by-entry without loading the archive into Node', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
+  const path = join(directory, 'bundle.zip');
+  try {
+    writeFileSync(path, zipSync({
+      'flat.xml': strToU8('<Siri>flat</Siri>'),
+      'wrapped.zip': zipSync({ 'siri.xml': strToU8('<Siri>nested</Siri>') }),
+    }));
+    const xmls = [...xmlDocumentsInZipFile(path)].map((d) => d.xml).sort();
+    assert.deepEqual(xmls, ['<Siri>flat</Siri>', '<Siri>nested</Siri>']);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('a date range includes both endpoints', () => {
