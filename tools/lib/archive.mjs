@@ -161,23 +161,40 @@ function* documentsFromEntry(name, bytes) {
 export async function* xmlDocumentsInZipFile(zipPath) {
   if (!existsSync(zipPath)) throw new Error(`no ZIP file at ${zipPath}`);
 
-  let yielded = 0;
   try {
-    for await (const doc of streamZipFile(zipPath)) {
-      yielded++;
-      yield doc;
-    }
+    yield* streamZipFile(zipPath);
   } catch (err) {
     // The streaming reader walks local file headers itself, so an archive
-    // built in a way it doesn't handle fails here rather than degrading. As
-    // long as it failed before handing anything over we can still fall back
-    // to the `unzip` binary, which is slow but has read these bundles
-    // before; once documents are out, retrying would double-count them.
-    if (yielded > 0) throw err;
-    console.warn(`  streaming read failed (${err.message}) — falling back to the unzip binary, which is slower`);
+    // built in a way it can't follow fails here rather than degrading — and
+    // it does happen: a real 5.5GB bundle read 2872 entries cleanly while
+    // the next day's exhausted a 4GB heap 40s in. Rather than lose the day,
+    // fall back to the `unzip` binary, which is several times slower but has
+    // read these bundles from the start.
+    //
+    // The fallback restarts the archive from the beginning, so entries
+    // already handed over are yielded a second time. That is safe for the
+    // caller this exists for: fetch-archive.mjs keys every sighting by
+    // vehicle and timestamp and drops repeats, so a re-read costs time, not
+    // correctness. A caller that counts documents rather than de-duplicating
+    // them should use one of the two readers directly.
+    console.warn(`  streaming read failed (${err.message})`);
+    console.warn('  falling back to the unzip binary and re-reading this bundle from the start — slower, and repeated sightings are de-duplicated');
     yield* xmlDocumentsInZipFileViaUnzip(zipPath);
   }
 }
+
+/**
+ * The most a single entry, or everything waiting to be handed over, may hold
+ * before the streaming read is abandoned.
+ *
+ * A per-poll SIRI-VM document is ~20MB, so this is far above anything the
+ * archive legitimately contains and only trips on the runaway case: a reader
+ * that has lost the entry boundaries and is accumulating the rest of a
+ * multi-GB archive into one buffer. Without it the process reaches the heap
+ * limit and dies, taking the whole backfill with it and leaving nothing to
+ * fall back to.
+ */
+const MAX_ENTRY_BYTES = 512 * 1024 * 1024;
 
 /** The one sequential inflate pass behind xmlDocumentsInZipFile(). */
 async function* streamZipFile(zipPath) {
@@ -186,22 +203,34 @@ async function* streamZipFile(zipPath) {
 
   /** Entries that finished inflating during the most recent push. */
   let ready = [];
+  let readyBytes = 0;
   let failure = null;
 
   unzipper.onfile = (file) => {
     if (file.name.endsWith('/')) return; // a directory entry
-    const chunks = [];
+    let chunks = [];
     let size = 0;
     file.ondata = (err, chunk, final) => {
       if (err) {
         failure ??= err;
         return;
       }
+      if (failure) return; // already given up; stop accumulating
       if (chunk?.length) {
         chunks.push(chunk);
         size += chunk.length;
+        if (size > MAX_ENTRY_BYTES) {
+          failure ??= new Error(
+            `entry ${file.name} exceeded ${MAX_ENTRY_BYTES / 1024 / 1024}MB — the reader has probably lost the entry boundaries`,
+          );
+          chunks = []; // drop what we have rather than hold it to the throw
+          return;
+        }
       }
-      if (final) ready.push({ name: file.name, bytes: joinChunks(chunks, size) });
+      if (final) {
+        ready.push({ name: file.name, bytes: joinChunks(chunks, size) });
+        readyBytes += size;
+      }
     };
     file.start();
   };
@@ -211,9 +240,18 @@ async function* streamZipFile(zipPath) {
     for await (const chunk of source) {
       unzipper.push(chunk, false);
       if (failure) throw failure;
+      // One push can complete several entries, and each is held whole until
+      // it's handed over — so this is the other way memory can run away, and
+      // it's checked before draining rather than after.
+      if (readyBytes > MAX_ENTRY_BYTES) {
+        throw new Error(
+          `${(readyBytes / 1024 / 1024).toFixed(0)}MB of entries completed in one read without being consumed`,
+        );
+      }
       if (ready.length) {
         const batch = ready;
         ready = [];
+        readyBytes = 0;
         for (const { name, bytes } of batch) yield* documentsFromEntry(name, bytes);
       }
     }

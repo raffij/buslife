@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zipSync, strToU8 } from 'fflate';
@@ -198,6 +198,32 @@ test('directory entries are skipped by the streaming file reader too', async () 
     const docs = await collect(xmlDocumentsInZipFile(path));
     assert.equal(docs.length, 1);
     assert.equal(docs[0].name, 'sirivm/a.xml');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('a bundle the streaming reader cannot follow falls back instead of failing', async () => {
+  // A real 5.5GB bundle exhausted the heap mid-read where the previous day's
+  // had streamed cleanly, so the streaming path is not allowed to be the only
+  // way in. Simulated here by handing it a file that is not a ZIP at all: the
+  // streaming reader rejects it, and the documents still come back.
+  const directory = mkdtempSync(join(tmpdir(), 'buslife-archive-test-'));
+  const path = join(directory, 'bundle.zip');
+  try {
+    writeFileSync(path, zipSync({ 'flat.xml': strToU8('<Siri>flat</Siri>') }));
+    const good = await collect(xmlDocumentsInZipFile(path));
+    assert.equal(good.length, 1, 'sanity: the streaming reader handles a normal bundle');
+
+    // Corrupt the local file header so the streaming walk can't follow it,
+    // while leaving the central directory `unzip` reads intact.
+    const bytes = new Uint8Array(readFileSync(path));
+    bytes[6] = 0xff;
+    bytes[7] = 0xff;
+    writeFileSync(path, bytes);
+
+    const docs = await collect(xmlDocumentsInZipFile(path));
+    assert.deepEqual(docs.map((d) => d.xml), ['<Siri>flat</Siri>'], 'the fallback still produced the document');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -58,10 +58,21 @@ subprocess-per-entry reader with a single streaming inflate pass
 (`fflate`'s `Unzip`, already a dependency) driven by `for await`, so
 backpressure bounds memory the way the file handle did before.
 
-Measured through the repo's own code after the change: parse **34x** faster
-(261 ms -> 7.7 ms per document), and read+parse together **13.0 -> 0.5
-min/bundle**. A local day is now dominated by the ~9.5 min/bundle download,
-which is network-bound and which no language changes.
+Measured on a real bundle in Actions ([run 5][run5], 2872 documents of
+2026-08-29): **1.4 -> 8.1 documents/sec**, so a bundle's read-and-parse went
+from ~33.5 min to **5m55s**, a 5.7x end-to-end gain. The synthetic benchmark
+above suggested more (the parse alone is ~34x); it doesn't materialise because
+once the regex work is gone the cost is dominated by inflating ~5.5GB and
+decoding it to strings, which is real work rather than waste. A local day is
+now dominated by the ~7 min/bundle download, which is network-bound and which
+no language changes.
+
+The same run confirmed the filter is still correct on real data: 362 sightings
+for line 99, all of them in the last ~120 documents of the 2026-08-29 bundle —
+which is exactly right, since a BST local day takes only its final hour from
+the preceding UTC day.
+
+[run5]: https://github.com/raffij/buslife/actions/runs/33415620493
 
 The alternatives:
 
@@ -88,9 +99,11 @@ The alternatives:
 
 ## Consequences
 
-A day that took ~70 minutes of parsing now takes well under one, so a
-multi-day range is viable inside the job limit for the first time. Peak memory
-stays bounded, now by streaming backpressure rather than by a file handle.
+A local day's two bundles now read and parse in ~12 minutes rather than ~67,
+so the job is dominated by its ~14 minutes of downloading and a multi-day
+range is viable inside the job limit for the first time. Peak memory is
+bounded by streaming backpressure plus an explicit cap, with the `unzip`
+reader behind it when that cap trips.
 
 `parseSiriVm(xml)` is unchanged for callers that want every vehicle — the
 live recorder (`record.mjs`) passes no filter and still sees the whole feed,
@@ -104,30 +117,69 @@ returns `scanned`, and `fetch-archive.mjs` counts that instead, so the
 diagnostic still works.
 
 The `unzip`-per-entry reader is kept as `xmlDocumentsInZipFileViaUnzip` and is
-used automatically if the streaming reader fails before yielding anything —
-it walks local file headers itself, so an archive built in a way `fflate`
-doesn't handle degrades to the slower path that has read these bundles
-before, rather than failing the run.
+used automatically whenever the streaming read fails, at whatever point it
+fails. It re-reads the bundle from the start, so `xmlDocumentsInZipFile` can
+yield a document twice — safe for `fetch-archive.mjs`, which de-duplicates,
+and documented on the function for anyone who counts documents instead.
 
-### Disk, once time stopped being the limit
+### The streaming reader is not trustworthy on its own
 
-Making the range affordable in time exposed the next runner limit: the shared
-cache in `data/archive-cache/` was never pruned. A bundle is ~4GB and N local
-dates span N+1 UTC days, so a week-long range wants ~32GB on a GitHub runner
-with ~14GB free — it would have run out of disk instead of out of time.
+Run 5 also found the limit of the streaming reader, and it is not a
+theoretical one. The 2026-08-29 bundle streamed cleanly end to end. The
+2026-08-30 bundle — the same source, the same shape, ~5.5GB like its
+predecessor — exhausted a 4GB heap about 40 seconds in, after handing over
+~128 entries:
 
-`fetch-archive-range.mjs` now takes `--prune-cache`, which drops each bundle
-as soon as no remaining date in the run needs it, bounding disk to the two or
-three bundles actually in play while keeping the bandwidth saving that made
-the cache worth having (consecutive local dates share a bundle, and the shared
-one is explicitly kept). Both workflows pass it, and both now report `df -h /`
-either side of the backfill so "no space left on device" is legible rather
-than mysterious. It is opt-in because locally the opposite trade is usually
-right: re-downloading 4GB to fetch a second route for a date already done
-costs more than the disk does.
+```
+17:02:50  2026-08-30: downloaded
+17:03:47  FATAL ERROR: Reached heap limit Allocation failed
+          Mark-Compact (reduce) 4094.7 (4096.8) -> 4094.3 (4096.8) MB
+```
+
+The root cause is not established: `fflate`'s streaming `Unzip` follows local
+file headers itself, and something in that bundle appears to cost it the entry
+boundaries, after which it accumulates rather than emitting. Reproducing it
+needs the bundle, which is a 5.5GB download away from any dev machine.
+
+So the reader is bounded by construction instead of by diagnosis. A single
+entry, or the set of entries completed by one read and not yet consumed, may
+not exceed 512MB — twenty-odd times a legitimate ~20MB poll document, so it
+only trips on the runaway case. Exceeding it abandons the streaming read and
+falls back to the `unzip` binary, which re-reads the bundle from the start;
+`fetch-archive.mjs` keys sightings by vehicle and timestamp and drops repeats,
+so that costs time rather than correctness. The failure mode is now "this day
+takes ~15 minutes instead of ~6" rather than "the process dies and the day is
+lost".
+
+### Disk was never the constraint it looked like
+
+The unbounded cache in `data/archive-cache/` was worth fixing, but not for the
+reason first supposed. Measured on the runner, `/` is **145G with 85G
+available**, not the ~14G assumed — a single local day's two bundles (~11GB
+together) were never close to filling it, and no run has ever failed on disk.
+
+`--prune-cache` is kept because a *wide range* still exceeds that: at ~5.5GB a
+bundle and N+1 bundles for N dates, roughly a fortnight's backfill would
+exhaust 85G. It drops each bundle once no remaining date needs it, keeping the
+one consecutive dates share until the later is done. Both workflows pass it
+and report `df -h /` either side, so if disk ever does become the limit it is
+legible rather than mysterious. It is opt-in because locally the opposite
+trade is usually right: re-downloading 5.5GB to fetch a second route for a
+date already done costs more than the disk does.
 
 Both workflows also gained an explicit `timeout-minutes`, so a job that is
 going to fail on a stalled transfer says so well before the 6-hour default.
+
+### `dry_run` and `force` never reached the scripts
+
+Found by dispatching what was meant to be a safe dry run and watching it start
+a real multi-GB download. Both workflows gated their flags on
+`inputs.<name> == 'true'`, and for a `type: boolean` input that is always
+false: `inputs.*` is a real boolean (unlike `github.event.inputs.*`, always a
+string), and GitHub's `==` casts a boolean and a string to numbers before
+comparing — `true` becomes 1, `'true'` becomes NaN. Both now test truthiness,
+which is correct for a typed boolean, with the reasoning left in the workflow
+files so it doesn't get "fixed" back.
 
 Still outstanding, and not addressed here: a BST local day pulls two bundles
 but needs only one hour from the first, and all 2880 of its documents are
