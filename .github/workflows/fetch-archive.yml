@@ -1,0 +1,148 @@
+name: Backfill from the BODS archive
+
+# Pulls "yesterday" (Europe/London) from Open Innovations' BODS archive,
+# compiles it, and lands it on main as its own PR — see
+# docs/decisions/0001-backfill-from-the-open-innovations-archive.md for why
+# this can run unattended at all: fetch-archive.mjs needs no API key, the
+# archive is public.
+#
+# This can't lean on ci.yml's own checks+automerge for the PR it opens: a PR
+# created with the default GITHUB_TOKEN doesn't fire other workflows'
+# `pull_request` triggers (GitHub's recursion guard), so ci.yml's `checks`
+# job would simply never run against it. This workflow validates and merges
+# itself instead, then explicitly re-dispatches the push-triggered workflows
+# that a GITHUB_TOKEN-authored merge also can't trigger on its own — the
+# same two-step GitHub leaves every automated merge to do, not something
+# specific to this workflow.
+
+on:
+  schedule:
+    # 06:00 UTC. By 01:00 UTC the archive's UTC-day components of "yesterday"
+    # (Europe/London) have both fully elapsed at the BODS end; how long Open
+    # Innovations' own bundling takes after that isn't documented, so this
+    # is a guess at a safe buffer, not a documented guarantee. A run that
+    # 404s because the bundle isn't published yet fails loudly (see below)
+    # rather than silently doing nothing — re-run it by hand once it is.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Local date to backfill (YYYY-MM-DD). Defaults to yesterday (Europe/London)."
+        required: false
+      force:
+        description: "Re-fetch even if public/replays/ already has this date."
+        type: boolean
+        default: false
+
+concurrency:
+  group: fetch-archive
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine the date to backfill
+        id: date
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            date="${{ inputs.date }}"
+          else
+            date="$(TZ=Europe/London date -d yesterday +%F)"
+          fi
+          echo "date=$date" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already backfilled
+        id: existing
+        run: |
+          if [ -f "public/replays/wave-99-${{ steps.date.outputs.date }}.json" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "Already have public/replays/wave-99-${{ steps.date.outputs.date }}.json — nothing to do (rerun with force: true to refetch)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch from the archive
+        if: steps.existing.outputs.skip == 'false'
+        run: npm run fetch-archive -- --date "${{ steps.date.outputs.date }}" --line 99
+
+      - name: Compile the replay
+        if: steps.existing.outputs.skip == 'false'
+        run: npm run compile -- --date "${{ steps.date.outputs.date }}"
+
+      - name: Check whether anything actually changed
+        if: steps.existing.outputs.skip == 'false'
+        id: diff
+        run: |
+          if git diff --quiet -- public/replays/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate before pushing anything
+        if: steps.existing.outputs.skip == 'false' && steps.diff.outputs.changed == 'true'
+        run: |
+          npm test
+          npm run build
+
+      - name: Open and merge the PR
+        if: steps.existing.outputs.skip == 'false' && steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATE: ${{ steps.date.outputs.date }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          branch="bot/backfill-$DATE"
+          git checkout -b "$branch"
+          git add public/replays/
+          git commit -m "Backfill $DATE from the BODS archive" \
+            -m "Fetched and compiled automatically by .github/workflows/fetch-archive.yml." \
+            -m "$(git diff --cached --stat)"
+          # --force: this branch is disposable and rebuilt from main every
+          # run, so a leftover from a previous failed attempt (pushed, but
+          # the PR step never completed) must not block a retry.
+          git push --force -u origin "$branch"
+
+          # Idempotent: a previous attempt may have opened this PR and then
+          # failed before merging (e.g. a transient error below), in which
+          # case creating it again would just error that it already exists.
+          existing_pr="$(gh pr list --head "$branch" --state open --json number --jq '.[0].number')"
+          if [ -n "$existing_pr" ]; then
+            echo "Reusing existing PR #$existing_pr for $branch"
+            pr="$existing_pr"
+          else
+            pr="$(gh pr create \
+              --title "Backfill $DATE from the BODS archive" \
+              --body "Fetched and compiled automatically by \`.github/workflows/fetch-archive.yml\`. Validated with \`npm test\` and \`npm run build\` before pushing (see the workflow run for output)." \
+              --base main --head "$branch" | grep -oE '[0-9]+$')"
+          fi
+
+          gh pr merge --squash --delete-branch "$pr"
+
+      # A GITHUB_TOKEN-authored merge push doesn't trigger other workflows'
+      # `push` triggers on its own (same recursion guard as above) — dispatch
+      # explicitly, exactly as ci.yml's own automerge job does.
+      - name: Trigger main-branch workflows
+        if: steps.existing.outputs.skip == 'false' && steps.diff.outputs.changed == 'true' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml --ref main --repo "${{ github.repository }}"
+          gh workflow run deploy-pages.yml --ref main --repo "${{ github.repository }}"
