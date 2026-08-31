@@ -45,6 +45,10 @@ export default function App() {
   const [speed, setSpeed] = useState(120);
   const [showTrails, setShowTrails] = useState(true);
   const [showRaw, setShowRaw] = useState(false);
+  // Only consulted below the mobile breakpoint (see styles.css) — on desktop
+  // the console panel is always shown regardless of this value, so it starts
+  // false purely so a phone opens onto the map rather than a full sheet.
+  const [expanded, setExpanded] = useState(false);
 
   const window = replay?.window ?? [0, 1];
   const { t, seek, nudge } = useClock({ from: window[0], to: window[1], speed, playing: playing && !!replay });
@@ -146,17 +150,61 @@ export default function App() {
   const isSynthetic = replay.source.kind === 'synthetic';
 
   return (
-    <div className="app">
+    <div className="app" data-expanded={expanded}>
       <div className="map">
-        <DeckGL initialViewState={viewState} controller layers={layers} getTooltip={getTooltip}>
+        <DeckGL
+          initialViewState={viewState}
+          controller={{ dragRotate: false, touchRotate: false }}
+          layers={layers}
+          getTooltip={getTooltip}
+        >
           <Map mapStyle={MAP_STYLE} reuseMaps />
         </DeckGL>
       </div>
 
+      {/* Mobile only (see styles.css): a compact bar over the map, the
+          default view on a phone so the map is visible first. Tapping it
+          swaps in the full panel below. */}
+      <div
+        className="peek-bar"
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(true)}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && setExpanded(true)}
+      >
+        <span className="peek-clock">{formatClock(replay.dayStartUnix, t, replay.timeZone)}</span>
+        <span className="peek-tally">
+          <b>{fleet.inService}</b> running · {replay.route.line} {replay.route.name}
+        </span>
+        <button
+          type="button"
+          className="peek-play"
+          onClick={(e) => {
+            e.stopPropagation();
+            setPlaying((p) => !p);
+          }}
+          aria-label={playing ? 'Pause' : 'Play'}
+        >
+          {playing ? '❚❚' : '▶'}
+        </button>
+        <span className="peek-chevron" aria-hidden="true">
+          ▲
+        </span>
+      </div>
+
       <div className="console">
+        <div className="grab" aria-hidden="true" />
         <div className="masthead">
           <span className="route-badge">{replay.route.line}</span>
           <span className="route-name">{replay.route.name}</span>
+          <button
+            type="button"
+            className="close-detail"
+            onClick={() => setExpanded(false)}
+            aria-label="Collapse details"
+          >
+            ▾
+          </button>
         </div>
         <div className="route-meta">
           {replay.route.operator} · {replay.date}

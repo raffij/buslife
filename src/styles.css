@@ -34,7 +34,13 @@ body {
 button, select, input { font: inherit; color: inherit; }
 
 .app { position: relative; height: 100%; }
-.map { position: absolute; inset: 0; }
+/* iOS Safari's address bar resizing makes plain 100% wobble; dvh tracks the
+   actual visible viewport where it's supported, and is simply ignored (the
+   100% above still applies) where it isn't. */
+@supports (height: 100dvh) {
+  .app { height: 100dvh; }
+}
+.map { position: absolute; inset: 0; touch-action: none; }
 
 /* --- the floating console ------------------------------------------------ */
 
@@ -181,7 +187,121 @@ button, select, input { font: inherit; color: inherit; }
   font-family: var(--mono);
 }
 
-@media (max-width: 560px) {
-  .console { top: 8px; left: 8px; right: 8px; width: auto; padding: 12px; }
+/* --- mobile: a bottom sheet instead of a corner panel --------------------- */
+/*
+ * The desktop console is a small overlay in one corner, so the map behind it
+ * is always mostly visible. On a phone that same panel — sized to hold a
+ * legend, two banners and a footnote — has no corner to sit in; at full
+ * width it would either cover the whole screen or need to be trimmed down to
+ * something less useful.
+ *
+ * Below the breakpoint the console becomes a bottom sheet instead: a compact
+ * "peek" bar (clock, in-service tally, play/pause) sits over the map by
+ * default so the map is the thing you see first, and tapping it swaps in the
+ * full panel — unchanged from desktop, just anchored to the bottom and
+ * scrollable — with a close button to swap back. `expanded` (App.jsx) is the
+ * only thing that changes; every rule here is scoped to the media query, so
+ * desktop's layout and behaviour are untouched regardless of that state.
+ */
+.grab, .close-detail, .peek-bar { display: none; }
+
+@media (max-width: 680px) {
+  .app[data-expanded='false'] .console { display: none; }
+  .app[data-expanded='true'] .peek-bar { display: none; }
+
+  .console {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 82vh;
+    border-radius: 16px 16px 0 0;
+    padding: 8px 16px calc(14px + env(safe-area-inset-bottom));
+  }
+
+  .grab {
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--panel-line);
+    margin: 2px auto 10px;
+  }
+
+  .masthead { position: relative; padding-right: 34px; }
+  .close-detail {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: -2px;
+    right: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 0;
+    background: #1a212c;
+    color: var(--ink-dim);
+    font-size: 16px;
+    cursor: pointer;
+  }
+
   .clock { font-size: 32px; }
+
+  /* Touch targets grow a little over the desktop (mouse-sized) ones. */
+  .play, .step, .speed { padding-top: 10px; padding-bottom: 10px; }
+  .options label { padding: 3px 0; }
+
+  .peek-bar {
+    display: flex;
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 2;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    border: 1px solid var(--panel-line);
+    border-radius: 14px;
+    padding: 10px 8px 10px 14px;
+    text-align: left;
+    color: var(--ink);
+  }
+  .peek-clock {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    font-variant-numeric: tabular-nums;
+    flex: none;
+  }
+  .peek-tally {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--ink-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .peek-tally b { color: var(--ink); font-weight: 600; }
+  .peek-play {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--accent);
+    color: #06251f;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .peek-chevron {
+    flex: none;
+    color: var(--ink-faint);
+    font-size: 11px;
+  }
 }
