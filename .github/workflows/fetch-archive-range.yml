@@ -68,14 +68,18 @@ jobs:
       - name: Disk before
         run: df -h /
 
+      # The boolean inputs are tested for truthiness, not compared against
+      # 'true' — see the note in fetch-archive.yml for why that comparison is
+      # always false. It mattered most here: a "dry run" of a wide range was
+      # downloading every bundle in it.
       - name: Backfill the range
         run: >
           npm run fetch-archive-range -- --start "${{ inputs.start_date }}" --end "${{ inputs.end_date }}"
           --prune-cache
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
           ${{ inputs.operator && format('--operator {0}', inputs.operator) || '' }}
-          ${{ inputs.force == 'true' && '--force' || '' }}
-          ${{ inputs.dry_run == 'true' && '--check' || '' }}
+          ${{ inputs.force && '--force' || '' }}
+          ${{ inputs.dry_run && '--check' || '' }}
 
       - name: Disk after
         if: always()

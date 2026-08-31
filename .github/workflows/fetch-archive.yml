@@ -80,13 +80,21 @@ jobs:
 
       # One local date still spans two ~4GB UTC bundles; --prune-cache drops
       # the first as soon as it's been read, which is most of the footprint.
+      #
+      # The boolean inputs are tested for truthiness, NOT compared against
+      # 'true'. `inputs.dry_run` is a real boolean (unlike
+      # github.event.inputs.*, which is always a string), and GitHub's `==`
+      # casts a boolean and a string to numbers before comparing — true
+      # becomes 1, 'true' becomes NaN — so `inputs.dry_run == 'true'` is
+      # always false and the flag silently never arrives. Ticking "dry run"
+      # used to start a real multi-GB download.
       - name: Backfill every route for this date
         run: >
           npm run fetch-archive-range -- --start "${{ steps.date.outputs.date }}" --end "${{ steps.date.outputs.date }}"
           --prune-cache
           ${{ inputs.routes && format('--routes {0}', inputs.routes) || '' }}
-          ${{ inputs.force == 'true' && '--force' || '' }}
-          ${{ inputs.dry_run == 'true' && '--check' || '' }}
+          ${{ inputs.force && '--force' || '' }}
+          ${{ inputs.dry_run && '--check' || '' }}
 
       - name: Disk after
         if: always()
