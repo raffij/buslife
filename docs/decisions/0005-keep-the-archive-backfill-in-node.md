@@ -181,6 +181,25 @@ comparing — `true` becomes 1, `'true'` becomes NaN. Both now test truthiness,
 which is correct for a typed boolean, with the reasoning left in the workflow
 files so it doesn't get "fixed" back.
 
+### ...and behind it, a dry run could never have passed anyway
+
+With `--check` finally reaching the scripts, the backfill finished in under a
+second and the run failed at the next step instead:
+
+```bash
+for f in data/archive-cache/range-check.md data/archive-cache/range-summary.md; do
+  [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"
+done
+```
+
+Only one of those files is ever written. Under `bash -e` a `for` loop exits
+with its last iteration's status, so the step fails whenever the missing file
+comes last. A real run writes `range-summary.md` — last, present, exit 0. A
+`--check` run writes `range-check.md` and leaves `range-summary.md` missing in
+last place: exit 1. Every dry run was going to fail here whatever the backfill
+did, and it stayed invisible because the boolean bug meant no dry run ever got
+this far. Each bug hid the other. Now an `if`, which is unconditionally 0.
+
 Still outstanding, and not addressed here: a BST local day pulls two bundles
 but needs only one hour from the first, and all 2880 of its documents are
 parsed to find it. Skipping entries by filename timestamp would cut most of
