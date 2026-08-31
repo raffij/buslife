@@ -100,6 +100,16 @@ Its output is the same shape and location `record.mjs` writes to
 either way — the archive is a different way to fill that one file in, not a
 separate pipeline.
 
+### This runs automatically every day
+
+[`.github/workflows/fetch-archive.yml`](.github/workflows/fetch-archive.yml)
+does the above for "yesterday" on a schedule, needing no API key (the archive
+is public), and opens, validates, and merges its own PR — see
+[decision 0002](docs/decisions/0002-automate-the-daily-backfill.md) for why
+it can't just lean on `ci.yml`'s existing checks for that. Trigger it by hand
+(a specific date, or `force` to re-fetch one already backfilled) from the
+[Actions tab](../../actions/workflows/fetch-archive.yml).
+
 ## Using a different route
 
 `data/routes/wave-99.route.json` is the route shape the matcher snaps to — a
