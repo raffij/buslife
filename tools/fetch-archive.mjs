@@ -14,17 +14,20 @@
  *   npm run compile -- --date 2026-08-30
  *
  * A day-bundle is the whole country's SIRI-VM traffic and can run into the
- * hundreds of MB, so this streams each document out of the zip, filters it
- * to the requested line, and discards it — nothing about the other ~99% of
- * the country's buses is ever written to disk or held in memory at once.
+ * multiple GB, so this streams the download to disk, then reads each ZIP
+ * entry individually, filters it to the requested line, and discards it —
+ * nothing about the other ~99% of the country's buses is held in memory at
+ * once.
  */
 
-import { appendFileSync, existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, createWriteStream, renameSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, die } from './lib/args.mjs';
 import { parseSiriVm, vehicleKey } from './lib/siri.mjs';
-import { dayBundleUrl, nextDateStr, utcDaysForLocalDate, xmlDocumentsInBundle } from './lib/archive.mjs';
+import { dayBundleUrl, nextDateStr, utcDaysForLocalDate, xmlDocumentsInZipFile } from './lib/archive.mjs';
 import { zonedMidnightUnix } from '../src/replay/time.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,14 +56,19 @@ mkdirSync(dirname(outPath), { recursive: true });
 console.log(`fetching ${date} (${timeZone}) — needs ${utcDays.length} UTC day-bundle(s): ${utcDays.map((d) => `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`).join(', ')}`);
 
 /** Download with one retry — a multi-hundred-MB transfer is worth retrying once before giving up. */
-async function fetchWithRetry(url) {
+async function fetchWithRetry(url, destination) {
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const partial = `${destination}.part`;
     try {
       const res = await fetch(url);
       if (res.status === 404) return null; // no bundle for that day (before the archive started, or a gap)
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return new Uint8Array(await res.arrayBuffer());
+      if (!res.body) throw new Error('response has no body');
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(partial));
+      renameSync(partial, destination);
+      return true;
     } catch (err) {
+      if (existsSync(partial)) unlinkSync(partial);
       if (attempt === 2) throw err;
       console.log(`  retrying after: ${err.message}`);
       await new Promise((r) => setTimeout(r, 3000));
@@ -77,25 +85,22 @@ for (const utcDay of utcDays) {
   const label = `${utcDay.year}-${String(utcDay.month).padStart(2, '0')}-${String(utcDay.day).padStart(2, '0')}`;
   const cachePath = join(cacheDir, `sirivm-${label}.zip`);
 
-  let bytes;
+  let bundleAvailable;
   if (existsSync(cachePath)) {
     console.log(`${label}: using cached bundle (${cachePath})`);
-    bytes = readFileSync(cachePath);
+    bundleAvailable = true;
   } else {
     const url = dayBundleUrl('sirivm', utcDay);
     console.log(`${label}: downloading ${url}`);
-    bytes = await fetchWithRetry(url);
-    if (!bytes) {
+    bundleAvailable = await fetchWithRetry(url, cachePath);
+    if (!bundleAvailable) {
       console.log(`${label}: no bundle published (404) — skipping`);
       continue;
     }
-    // Cached before parsing: a crash or Ctrl-C partway through a day's worth
-    // of documents shouldn't mean re-downloading hundreds of MB to retry.
-    writeFileSync(cachePath, bytes);
-    console.log(`${label}: downloaded ${(bytes.length / 1e6).toFixed(0)}MB`);
+    console.log(`${label}: downloaded to ${cachePath}`);
   }
 
-  for (const { xml } of xmlDocumentsInBundle(bytes)) {
+  for (const { xml } of xmlDocumentsInZipFile(cachePath)) {
     docsRead++;
     if (docsRead % 500 === 0) process.stdout.write(`\r${label}: parsed ${docsRead} documents, ${matched.length} matches so far  `);
 
