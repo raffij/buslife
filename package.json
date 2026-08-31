@@ -11,7 +11,8 @@
     "test": "node --test test/*.test.mjs",
     "record": "node tools/record.mjs",
     "compile": "node tools/compile.mjs",
-    "demo": "node tools/make-demo.mjs"
+    "demo": "node tools/make-demo.mjs",
+    "fetch-archive": "node tools/fetch-archive.mjs"
   },
   "dependencies": {
     "@deck.gl/core": "^9.1.0",
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
+    "fflate": "^0.8.2",
     "vite": "^7.1.0"
   }
 }

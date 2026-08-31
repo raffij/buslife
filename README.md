@@ -16,9 +16,10 @@ recording it yourself first.
 ## How it works
 
 ```
-tools/record.mjs    poll the live BODS feed every 30s, append to data/snapshots/
-tools/compile.mjs    map-match a day's sightings onto the route, write public/replays/
-src/                 the web player (React + deck.gl + MapLibre)
+tools/record.mjs         poll the live BODS feed every 30s, append to data/snapshots/
+tools/fetch-archive.mjs  backfill a past day from a third-party archive instead
+tools/compile.mjs        map-match a day's sightings onto the route, write public/replays/
+src/                     the web player (React + deck.gl + MapLibre)
 ```
 
 Raw GPS pings are noisy — metres of jitter, the odd dropped fix, buses
@@ -67,6 +68,38 @@ something worth scrubbing to.
    and rebuilds `public/replays/index.json` so the new day shows up in the
    player's date picker.
 
+## Backfill a past day from the archive
+
+`record.mjs` can only ever watch today — BODS itself keeps no history, which
+is the whole reason it has to be polled live. [Open Innovations' BODS
+archive](https://data.datalibrary.uk/transport/BODS-ARCHIVE/) has already
+been doing that polling since 2025-06-18 and publishes the result as one zip
+per UTC day, so any day since then can be pulled in one shot instead of
+waited for:
+
+```
+npm run fetch-archive -- --date 2026-08-30 --line 99
+npm run compile -- --date 2026-08-30
+```
+
+A day-bundle is the *entire country's* traffic for that day (easily a few
+hundred MB), so `fetch-archive.mjs` streams through it and keeps only
+sightings matching `--line` (and `--operator`, if you pass one) — nothing
+about the rest of the country's buses is written to disk. The downloaded
+bundle itself is cached under `data/archive-cache/` (gitignored) so re-running
+with a different `--line` doesn't re-download it.
+
+`--date` is a **local** date (`Europe/London` by default, `--tz` to change
+it) — in British Summer Time that spans two of the archive's UTC-dated
+bundles, which `fetch-archive.mjs` works out and fetches both of
+automatically; getting this wrong would silently drop the first hour of a
+summer day's service rather than error.
+
+Its output is the same shape and location `record.mjs` writes to
+(`data/snapshots/<date>.ndjson`), so `compile.mjs` afterwards is identical
+either way — the archive is a different way to fill that one file in, not a
+separate pipeline.
+
 ## Using a different route
 
 `data/routes/wave-99.route.json` is the route shape the matcher snaps to — a
@@ -83,7 +116,7 @@ hundred metres, flagged as such in the app). To follow a different line:
 ## Development
 
 ```
-npm test      # geometry, map-matcher, SIRI-VM parser, replay clock — 39 tests
+npm test      # geometry, map-matcher, SIRI-VM parser, replay clock, archive — 49 tests
 npm run build # static build, output in dist/
 ```
 
@@ -96,6 +129,11 @@ map-matches offline in `compile.mjs` and interpolates live in the browser.
 - **[Bus Open Data Service](https://www.bus-data.dft.gov.uk/)** — the SIRI-VM
   vehicle-location feed. Free API key, no rate limit stated for the datafeed
   endpoint at a sensible polling interval.
+- **[Open Innovations' BODS archive](https://data.datalibrary.uk/transport/BODS-ARCHIVE/)**
+  — a third-party archive of the same SIRI-VM feed, polled and published
+  independently of this project since 2025-06-18 ([source](https://github.com/open-innovations/bods-archive)).
+  No key required; be a good citizen of someone else's free infrastructure —
+  `fetch-archive.mjs` caches what it downloads for exactly that reason.
 - **[CARTO](https://carto.com/basemaps) / [OpenStreetMap](https://www.openstreetmap.org/copyright)**
   — the dark basemap tiles, no key required.
 
