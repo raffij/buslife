@@ -1,0 +1,15 @@
+[
+  {
+    "file": "wave-99-2026-08-28.json",
+    "date": "2026-08-28",
+    "line": "99",
+    "name": "The Wave",
+    "operator": "Stagecoach South East",
+    "vehicles": 8,
+    "window": [
+      21120,
+      86394
+    ],
+    "sourceKind": "synthetic"
+  }
+]
